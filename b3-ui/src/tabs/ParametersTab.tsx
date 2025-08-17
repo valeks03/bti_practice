@@ -1,135 +1,105 @@
-import { Show, createMemo, createSignal, Index } from 'solid-js';
-import { createStore } from 'solid-js/store';
+import { For, createSignal } from 'solid-js';
 import { config, setConfig } from '../store';
-import type { TB3Config } from '../schema';
 
-const OP_TYPES = ['ScaleOperator', 'RandomWalkOperator', 'SwapOperator'] as const;
+type DType = 'real' | 'integer' | 'boolean';
 
-type ArgKind = 'value' | 'parameter' | 'enum' | 'distribution';
-type ArgRow = { key: string; kind: ArgKind; value: string };
+export default function ParametersTab() {
+  const [name, setName] = createSignal('');
+  const [dtype, setDtype] = createSignal<DType>('real');
+  const [value, setValue] = createSignal('');
+  const [shape, setShape] = createSignal(''); // "3,4" -> [3,4]
 
-export default function OperatorsTab() {
-  const [id, setId] = createSignal('op1');
-  const [type, setType] = createSignal<typeof OP_TYPES[number]>('ScaleOperator');
-
-  const [rows, setRows] = createStore<ArgRow[]>([]);
-  const paramNames = createMemo(() => config.parameters.map((p) => p.name));
-
-  function addRow() {
-    setRows(rows.length, { key: '', kind: 'parameter', value: '' });
+  function toPyId(s: string) {
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(s);
   }
-  function removeRow(i: number) {
-    setRows((prev) => prev.filter((_, idx) => idx !== i));
+  function parseValue(dt: DType, raw: string): any {
+    if (dt === 'boolean') return raw.trim().toLowerCase() === 'true';
+    if (dt === 'integer') return parseInt(raw, 10);
+    return Number(raw); // real
   }
-
-  function onKeyInput(i: number, v: string)  { setRows(i, 'key', v); }
-  function onKindChange(i: number, v: ArgKind){ setRows(i, 'kind', v); }
-  function onValueInput(i: number, v: string) { setRows(i, 'value', v); }
-
-  function buildArgs(): Record<string, any> {
-    const out: Record<string, any> = {};
-    for (const r of rows) {
-      if (!r.key) continue;
-      if (r.kind === 'parameter') out[r.key] = { kind: 'parameter', ref: r.value };
-      else if (r.kind === 'enum') out[r.key] = { kind: 'enum', ref: r.key, value: r.value };
-      else if (r.kind === 'distribution') out[r.key] = { kind: 'distribution', ref: r.value };
-      else {
-        const v = r.value.trim();
-        if (/^(true|false)$/i.test(v)) out[r.key] = { kind: 'value', value: /^true$/i.test(v) };
-        else if (!Number.isNaN(Number(v)) && v !== '') out[r.key] = { kind: 'value', value: Number(v) };
-        else out[r.key] = { kind: 'value', value: v };
-      }
-    }
-    return out;
+  function parseShape(raw: string): number[] {
+    const r = raw.trim();
+    if (!r) return [];
+    return r
+      .split(',')
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => Number.isFinite(n) && n >= 0);
   }
 
-  function addOperator() {
-    const oid = id().trim(); if (!oid) { alert('Укажите id'); return; }
-    setConfig('operators', (list) => [
-      ...list,
-      { id: oid, type: type(), args: buildArgs() } as TB3Config['operators'][number],
+  function addParam() {
+    const nm = name().trim();
+    if (!toPyId(nm)) { alert('Имя должно быть валидным Python identifier'); return; }
+    if (config.parameters.some((p) => p.name === nm)) { alert('Такое имя уже есть'); return; }
+    const v = parseValue(dtype(), value());
+    const shp = parseShape(shape());
+    setConfig('parameters', (prev) => [
+      ...prev,
+      { name: nm, dtype: dtype(), value: v, shape: shp, bounds: {} } as any,
     ]);
-    setId('');
-    setRows(() => []);
+    setName(''); setValue(''); setShape('');
+  }
+
+  function removeParam(i: number) {
+    setConfig('parameters', (prev) => prev.filter((_, idx) => idx !== i));
   }
 
   return (
-    <section class="bg-white rounded-2xl shadow p-4">
-      <h2 class="text-lg font-semibold mb-3">Operators</h2>
+    <section class="bg-white rounded-2xl border shadow-sm p-4">
+      <h2 class="text-base font-semibold mb-3">Parameters</h2>
+
       <div class="grid md:grid-cols-4 gap-2">
-        <input class="border rounded px-3 py-2" placeholder="id" value={id()} onInput={(e) => setId(e.currentTarget.value)} />
-        <select class="border rounded px-3 py-2" value={type()} onChange={(e) => setType(e.currentTarget.value as any)}>
-          {OP_TYPES.map((t) => <option value={t}>{t}</option>)}
+        <input
+          class="border rounded-xl px-3 py-2"
+          placeholder="name (python id)"
+          value={name()}
+          onInput={(e) => setName(e.currentTarget.value)}
+        />
+        <select
+          class="border rounded-xl px-3 py-2"
+          value={dtype()}
+          onChange={(e) => setDtype(e.currentTarget.value as DType)}
+        >
+          <option value="real">real</option>
+          <option value="integer">integer</option>
+          <option value="boolean">boolean</option>
         </select>
-        <div class="md:col-span-2 flex items-center gap-2">
-          <button class="px-3 py-2 rounded-2xl bg-gray-900 text-white" onClick={addRow}>+ arg</button>
-          <button class="px-3 py-2 rounded-2xl bg-gray-100" onClick={addOperator}>Add operator</button>
-        </div>
+        <input
+          class="border rounded-xl px-3 py-2"
+          placeholder="value (e.g. 1e-6, 2, true)"
+          value={value()}
+          onInput={(e) => setValue(e.currentTarget.value)}
+        />
+        <input
+          class="border rounded-xl px-3 py-2"
+          placeholder="shape (e.g. '', '3', '3,4')"
+          value={shape()}
+          onInput={(e) => setShape(e.currentTarget.value)}
+        />
       </div>
 
-      <div class="mt-3 space-y-2">
-        <Index each={rows}>
-          {(r, i) => (
-            <div class="grid md:grid-cols-5 gap-2">
-              <input
-                class="border rounded px-3 py-2"
-                placeholder="key (напр. target/scale)"
-                value={r().key}
-                onInput={(e) => onKeyInput(i, e.currentTarget.value)}
-              />
-              <select
-                class="border rounded px-3 py-2"
-                value={r().kind}
-                onChange={(e) => onKindChange(i, e.currentTarget.value as ArgKind)}
-              >
-                <option value="parameter">parameter</option>
-                <option value="value">value</option>
-                <option value="enum">enum</option>
-                <option value="distribution">distribution</option>
-              </select>
-
-              <Show when={r().kind === 'parameter'} fallback={
-                <input
-                  class="border rounded px-3 py-2 md:col-span-2"
-                  placeholder="value / ref"
-                  value={r().value}
-                  onInput={(e) => onValueInput(i, e.currentTarget.value)}
-                />
-              }>
-                <select
-                  class="border rounded px-3 py-2 md:col-span-2"
-                  value={r().value}
-                  onChange={(e) => onValueInput(i, e.currentTarget.value)}
-                >
-                  <option value="">— выбери параметр —</option>
-                  {paramNames().map((nm) => <option value={nm}>{nm}</option>)}
-                </select>
-              </Show>
-
-              <button class="text-red-600" onClick={() => removeRow(i)}>remove</button>
-            </div>
-          )}
-        </Index>
+      <div class="mt-3">
+        <button class="px-4 py-2 rounded-2xl bg-gray-900 text-white" onClick={addParam}>
+          Add parameter
+        </button>
       </div>
 
-      <div class="mt-6">
-        <h3 class="font-medium mb-2">Current:</h3>
-        <ul class="divide-y">
-          {config.operators.map((p, idx) => (
-            <li class="py-2 flex items-center justify-between">
+      <div class="mt-5 divide-y">
+        <For each={config.parameters}>
+          {(p, i) => (
+            <div class="py-2 flex items-center justify-between">
               <div class="text-sm">
-                <div class="font-mono">{p.id} — {p.type}</div>
-                <pre class="text-xs text-gray-600">{JSON.stringify(p.args, null, 2)}</pre>
+                <div class="font-mono">{p.name}</div>
+                <div class="text-gray-600">
+                  {p.dtype} {p.shape?.length ? `[${p.shape.join(',')}]` : ''} ={' '}
+                  <span class="font-mono">{JSON.stringify(p.value)}</span>
+                </div>
               </div>
-              <button
-                class="text-red-600 hover:underline"
-                onClick={() => setConfig('operators', (list) => list.filter((_, i) => i !== idx))}
-              >
+              <button class="text-red-600 hover:underline" onClick={() => removeParam(i())}>
                 remove
               </button>
-            </li>
-          ))}
-        </ul>
+            </div>
+          )}
+        </For>
       </div>
     </section>
   );

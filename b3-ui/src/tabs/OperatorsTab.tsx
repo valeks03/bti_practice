@@ -1,44 +1,42 @@
-import { For, Show, createSignal, createMemo } from 'solid-js';
+import { Show, createMemo, createSignal, Index } from 'solid-js';
+import type { JSX } from 'solid-js';
+import { createStore } from 'solid-js/store';
 import { config, setConfig } from '../store';
 import type { TB3Config } from '../schema';
 
 const OP_TYPES = ['ScaleOperator', 'RandomWalkOperator', 'SwapOperator'] as const;
-
 type ArgKind = 'value' | 'parameter' | 'enum' | 'distribution';
-type ArgRow = { key: string; kind: ArgKind; value: string };
+type ArgRow  = { key: string; kind: ArgKind; value: string };
 
-export default function OperatorsTab() {
-  const [id, setId] = createSignal('op1');
+export default function OperatorsTab(): JSX.Element {
+  const [id, setId]     = createSignal('op1');
   const [type, setType] = createSignal<typeof OP_TYPES[number]>('ScaleOperator');
-  const [rows, setRows] = createSignal<ArgRow[]>([]);
-  const paramNames = createMemo(() => config.parameters.map((p) => p.name));
 
-  function addRow() { setRows(prev => [...prev, { key: '', kind: 'parameter', value: '' }]); }
+  const [rows, setRows] = createStore<ArgRow[]>([]);
+  const paramNames      = createMemo(() => config.parameters.map(p => p.name));
+
+  function addRow() { setRows(rows.length, { key: '', kind: 'parameter', value: '' }); }
   function removeRow(i: number) { setRows(prev => prev.filter((_, idx) => idx !== i)); }
 
-  function onKeyInput(i: number, v: string) {
-    setRows(prev => prev.map((row, idx) => (idx === i ? { ...row, key: v } : row)));
-  }
-  function onKindChange(i: number, v: ArgKind) {
-    setRows(prev => prev.map((row, idx) => (idx === i ? { ...row, kind: v } : row)));
-  }
-  function onValueInput(i: number, v: string) {
-    setRows(prev => prev.map((row, idx) => (idx === i ? { ...row, value: v } : row)));
-  }
+  const onKeyInput   = (i: number, v: string) => setRows(i, 'key', v);
+  const onKindChange = (i: number, v: ArgKind) => setRows(i, 'kind', v);
+  const onValueInput = (i: number, v: string) => setRows(i, 'value', v);
+
+  const parseLiteral = (raw: string) => {
+    const v = raw.trim();
+    if (/^(true|false)$/i.test(v)) return /^true$/i.test(v);
+    if (v !== '' && !Number.isNaN(Number(v))) return Number(v);
+    return v;
+  };
 
   function buildArgs(): Record<string, any> {
     const out: Record<string, any> = {};
-    for (const r of rows()) {
+    for (const r of rows) {
       if (!r.key) continue;
       if (r.kind === 'parameter') out[r.key] = { kind: 'parameter', ref: r.value };
       else if (r.kind === 'enum') out[r.key] = { kind: 'enum', ref: r.key, value: r.value };
       else if (r.kind === 'distribution') out[r.key] = { kind: 'distribution', ref: r.value };
-      else {
-        const v = r.value.trim();
-        if (/^(true|false)$/i.test(v)) out[r.key] = { kind: 'value', value: /^true$/i.test(v) };
-        else if (!Number.isNaN(Number(v)) && v !== '') out[r.key] = { kind: 'value', value: Number(v) };
-        else out[r.key] = { kind: 'value', value: v };
-      }
+      else out[r.key] = { kind: 'value', value: parseLiteral(r.value) };
     }
     return out;
   }
@@ -50,16 +48,21 @@ export default function OperatorsTab() {
       { id: oid, type: type(), args: buildArgs() } as TB3Config['operators'][number],
     ]);
     setId('');
-    setRows([]);
+    setRows(() => []);
+  }
+
+  function removeSaved(idx: number) {
+    setConfig('operators', list => list.filter((_, i) => i !== idx));
   }
 
   return (
     <section class="bg-white rounded-2xl shadow p-4">
       <h2 class="text-lg font-semibold mb-3">Operators</h2>
+
       <div class="grid md:grid-cols-4 gap-2">
         <input class="border rounded px-3 py-2" placeholder="id" value={id()} onInput={e => setId(e.currentTarget.value)} />
         <select class="border rounded px-3 py-2" value={type()} onChange={e => setType(e.currentTarget.value as any)}>
-          <For each={OP_TYPES}>{t => <option value={t}>{t}</option>}</For>
+          {OP_TYPES.map(t => <option value={t}>{t}</option>)}
         </select>
         <div class="md:col-span-2 flex items-center gap-2">
           <button class="px-3 py-2 rounded-2xl bg-gray-900 text-white" onClick={addRow}>+ arg</button>
@@ -68,19 +71,19 @@ export default function OperatorsTab() {
       </div>
 
       <div class="mt-3 space-y-2">
-        <For each={rows()}>
+        <Index each={rows}>
           {(r, i) => (
             <div class="grid md:grid-cols-5 gap-2">
               <input
                 class="border rounded px-3 py-2"
                 placeholder="key (напр. target/scale)"
-                value={r.key}
-                onInput={e => onKeyInput(i(), e.currentTarget.value)}
+                value={r().key}
+                onInput={e => onKeyInput(i, e.currentTarget.value)}
               />
               <select
                 class="border rounded px-3 py-2"
-                value={r.kind}
-                onChange={e => onKindChange(i(), e.currentTarget.value as ArgKind)}
+                value={r().kind}
+                onChange={e => onKindChange(i, e.currentTarget.value as ArgKind)}
               >
                 <option value="parameter">parameter</option>
                 <option value="value">value</option>
@@ -88,49 +91,46 @@ export default function OperatorsTab() {
                 <option value="distribution">distribution</option>
               </select>
 
-              <Show when={r.kind === 'parameter'} fallback={
+              <Show when={r().kind === 'parameter'} fallback={
                 <input
                   class="border rounded px-3 py-2 md:col-span-2"
                   placeholder="value / ref"
-                  value={r.value}
-                  onInput={e => onValueInput(i(), e.currentTarget.value)}
+                  value={r().value}
+                  onInput={e => onValueInput(i, e.currentTarget.value)}
                 />
               }>
                 <select
                   class="border rounded px-3 py-2 md:col-span-2"
-                  value={r.value}
-                  onChange={e => onValueInput(i(), e.currentTarget.value)}
+                  value={r().value}
+                  onChange={e => onValueInput(i, e.currentTarget.value)}
                 >
                   <option value="">— выбери параметр —</option>
-                  <For each={paramNames()}>{nm => <option value={nm}>{nm}</option>}</For>
+                  {paramNames().map(nm => <option value={nm}>{nm}</option>)}
                 </select>
               </Show>
 
-              <button class="text-red-600" onClick={() => removeRow(i())}>remove</button>
+              <button class="text-red-600" onClick={() => removeRow(i)}>remove</button>
             </div>
           )}
-        </For>
+        </Index>
       </div>
 
       <div class="mt-6">
         <h3 class="font-medium mb-2">Current:</h3>
         <ul class="divide-y">
-          <For each={config.operators}>
-            {(p, i) => (
-              <li class="py-2 flex items-center justify-between">
-                <div class="text-sm">
-                  <div class="font-mono">{p.id} — {p.type}</div>
-                  <pre class="text-xs text-gray-600">{JSON.stringify(p.args, null, 2)}</pre>
-                </div>
-                <button
-                  class="text-red-600 hover:underline"
-                  onClick={() => setConfig('operators', list => list.filter((_, idx) => idx !== i()))}
-                >
-                  remove
-                </button>
-              </li>
-            )}
-          </For>
+          {config.operators.map((op, idx) => (
+            <li class="py-2 flex items-center justify-between">
+              <div class="text-sm">
+                <div class="font-mono">{op.id} — {op.type}</div>
+                <pre class="text-xs text-gray-600">
+                  {JSON.stringify(op.args ?? {}, null, 2)}
+                </pre>
+              </div>
+              <button class="text-red-600 hover:underline" onClick={() => removeSaved(idx)}>
+                remove
+              </button>
+            </li>
+          ))}
         </ul>
       </div>
     </section>
